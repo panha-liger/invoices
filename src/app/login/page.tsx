@@ -5,7 +5,7 @@ import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
-type Mode = 'signin' | 'signup' | 'forgot'
+type Mode = 'signin' | 'forgot'
 
 export default function LoginPage() {
   const router   = useRouter()
@@ -14,14 +14,13 @@ export default function LoginPage() {
   const [mode, setMode]               = useState<Mode>('signin')
   const [email, setEmail]             = useState('')
   const [password, setPassword]       = useState('')
-  const [confirmPass, setConfirmPass] = useState('')
   const [loading, setLoading]         = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const [error, setError]             = useState('')
   const [message, setMessage]         = useState('')
 
   function switchMode(m: Mode) {
-    setMode(m); setError(''); setMessage(''); setPassword(''); setConfirmPass('')
+    setMode(m); setError(''); setMessage(''); setPassword('')
   }
 
   // ── Google ──
@@ -39,22 +38,6 @@ export default function LoginPage() {
     e.preventDefault(); setLoading(true); setError(''); setMessage('')
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) { setError(error.message); setLoading(false) }
-    else router.push('/dashboard')
-  }
-
-  // ── Sign Up ──
-  async function handleSignUp(e: React.FormEvent) {
-    e.preventDefault(); setError(''); setMessage('')
-    if (password !== confirmPass) { setError('Passwords do not match.'); return }
-    if (password.length < 6) { setError('Password must be at least 6 characters.'); return }
-    setLoading(true)
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
-    })
-    setLoading(false)
-    if (error) setError(error.message)
     else router.push('/dashboard')
   }
 
@@ -97,36 +80,10 @@ export default function LoginPage() {
             neWwave Invoice Manager
           </h1>
           <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
-            {mode === 'signin' ? 'Sign in to your account' : mode === 'signup' ? 'Create a new account' : 'Reset your password'}
+            {mode === 'signin' ? 'Sign in to your account' : 'Reset your password'}
           </p>
         </div>
 
-        {/* Mode tabs (signin / signup) */}
-        {mode !== 'forgot' && (
-          <div style={{ display: 'flex', background: 'var(--surface-2)', borderRadius: 9, padding: 3, marginBottom: 24, border: '1px solid var(--border)' }}>
-            {(['signin', 'signup'] as Mode[]).map((m) => (
-              <button
-                key={m}
-                onClick={() => switchMode(m)}
-                style={{
-                  flex: 1,
-                  padding: '7px 0',
-                  borderRadius: 7,
-                  border: 'none',
-                  fontSize: 13,
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  transition: 'all 0.15s',
-                  background: mode === m ? 'var(--surface)' : 'transparent',
-                  color: mode === m ? 'var(--text)' : 'var(--text-muted)',
-                  boxShadow: mode === m ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
-                }}
-              >
-                {m === 'signin' ? 'Sign In' : 'Sign Up'}
-              </button>
-            ))}
-          </div>
-        )}
 
         {/* Google button (not on forgot) */}
         {mode !== 'forgot' && (
@@ -177,19 +134,6 @@ export default function LoginPage() {
             <button type="button" onClick={() => switchMode('forgot')} style={linkBtn}>
               Forgot password?
             </button>
-          </form>
-        )}
-
-        {/* ── Sign Up form ── */}
-        {mode === 'signup' && (
-          <form onSubmit={handleSignUp} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <Field label="Email" type="email" value={email} onChange={setEmail} placeholder="you@example.com" />
-            <Field label="Password" type="password" value={password} onChange={setPassword} placeholder="Min. 6 characters" />
-            <Field label="Confirm Password" type="password" value={confirmPass} onChange={setConfirmPass} placeholder="Repeat password" />
-
-            <Feedback error={error} message={message} />
-
-            <SubmitButton loading={loading} busy={busy} label="Create Account" loadingLabel="Creating…" />
           </form>
         )}
 
