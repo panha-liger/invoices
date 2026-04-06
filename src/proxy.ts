@@ -30,7 +30,8 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith('/dashboard') ||
     pathname.startsWith('/invoices') ||
     pathname.startsWith('/upload') ||
-    pathname.startsWith('/export')
+    pathname.startsWith('/export') ||
+    pathname.startsWith('/settings')
 
   if (!user && isAppRoute) {
     return NextResponse.redirect(new URL('/login', request.url))
