@@ -1,22 +1,38 @@
 import sharp from 'sharp'
-import { PDFParse } from 'pdf-parse'
 
-// Extract all text content from a PDF buffer
+// Extract all text content from a PDF buffer using pdfjs-dist (pure JS, works on Vercel)
 export async function extractTextFromPDF(pdfBuffer: Buffer): Promise<string> {
-  const parser = new PDFParse({ data: pdfBuffer })
-  const result = await parser.getText()
-  await parser.destroy()
-  return result.text
+  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
+
+  // Disable the worker (not needed for server-side use)
+  pdfjsLib.GlobalWorkerOptions.workerSrc = ''
+
+  const loadingTask = pdfjsLib.getDocument({
+    data: new Uint8Array(pdfBuffer),
+    useWorkerFetch: false,
+    isEvalSupported: false,
+    useSystemFonts: true,
+  })
+
+  const pdf = await loadingTask.promise
+  const textParts: string[] = []
+
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i)
+    const content = await page.getTextContent()
+    const pageText = content.items
+      .map((item: { str?: string }) => item.str ?? '')
+      .join(' ')
+    textParts.push(pageText)
+  }
+
+  await pdf.destroy()
+  return textParts.join('\n')
 }
 
-// Render first page of PDF as a PNG buffer (for thumbnail)
-export async function renderPDFThumbnail(pdfBuffer: Buffer): Promise<Buffer> {
-  const parser = new PDFParse({ data: pdfBuffer })
-  const result = await parser.getScreenshot({ desiredWidth: 800, partial: [1] })
-  await parser.destroy()
-  const page = result.pages[0]
-  if (!page?.data) throw new Error('Failed to render PDF thumbnail')
-  return page.data as Buffer
+// Thumbnail generation requires native canvas — skip on serverless
+export async function renderPDFThumbnail(_pdfBuffer: Buffer): Promise<Buffer> {
+  throw new Error('PDF thumbnail generation not supported in serverless environment')
 }
 
 export async function imageToBase64(imageBuffer: Buffer): Promise<{ base64: string; mimeType: string }> {
