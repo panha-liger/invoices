@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, use } from 'react'
+import { useEffect, useState, use, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Invoice, InvoiceCategory, InvoiceStatus } from '@/types'
 import Card from '@/components/ui/Card'
@@ -8,7 +8,7 @@ import Button from '@/components/ui/Button'
 import StatusBadge from '@/components/ui/StatusBadge'
 import AccountBadge from '@/components/ui/AccountBadge'
 import CategoryBadge from '@/components/ui/CategoryBadge'
-import { ArrowLeft, Check, X, AlertTriangle, Edit2, Save, FileText, ExternalLink, Trash2 } from 'lucide-react'
+import { ArrowLeft, Check, X, AlertTriangle, Edit2, Save, FileText, ExternalLink, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
 
 const CATEGORIES: InvoiceCategory[] = ['marketing','office','software','inventory','logistics','other']
 
@@ -25,6 +25,20 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const [saving,  setSaving]  = useState(false)
   const [form, setForm]       = useState<Partial<Invoice>>({})
   const [fileInfo, setFileInfo] = useState<{ url: string; file_type: string; file_name: string } | null>(null)
+  const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
+
+  // Prev/next from list stored in sessionStorage
+  const [prevId, setPrevId] = useState<string | null>(null)
+  const [nextId, setNextId] = useState<string | null>(null)
+
+  useEffect(() => {
+    try {
+      const list: string[] = JSON.parse(sessionStorage.getItem('invoice_list') || '[]')
+      const idx = list.indexOf(id)
+      setPrevId(idx > 0 ? list[idx - 1] : null)
+      setNextId(idx >= 0 && idx < list.length - 1 ? list[idx + 1] : null)
+    } catch {}
+  }, [id])
 
   useEffect(() => {
     fetch(`/api/invoices/${id}`).then(r=>r.json()).then(d => { setInvoice(d); setForm(d) }).finally(() => setLoading(false))
@@ -34,21 +48,47 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
     fetch(`/api/invoices/${id}/file-url`).then(r => r.ok ? r.json() : null).then(d => { if (d?.url) setFileInfo(d) })
   }, [id])
 
+  function showToast(msg: string, type: 'success' | 'error' = 'success') {
+    setToast({ msg, type })
+    setTimeout(() => setToast(null), 2500)
+  }
+
+  const handleApprove = useCallback(async () => {
+    if (!invoice || saving) return
+    setSaving(true)
+    // Optimistic
+    setInvoice(prev => prev ? { ...prev, status: 'approved' } : prev)
+    await fetch('/api/invoices/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [id], action: 'approve' }),
+    })
+    setSaving(false)
+    showToast('Approved')
+    // Auto-advance to next if available
+    if (nextId) setTimeout(() => router.push(`/invoices/${nextId}`), 600)
+  }, [invoice, saving, id, nextId, router])
+
+  const handleReject = useCallback(async () => {
+    if (!invoice || saving) return
+    setSaving(true)
+    // Optimistic
+    setInvoice(prev => prev ? { ...prev, status: 'rejected' } : prev)
+    await fetch('/api/invoices/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [id], action: 'reject' }),
+    })
+    setSaving(false)
+    showToast('Rejected')
+    if (nextId) setTimeout(() => router.push(`/invoices/${nextId}`), 600)
+  }, [invoice, saving, id, nextId, router])
+
   async function handleSave() {
     setSaving(true)
     const res = await fetch(`/api/invoices/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(form) })
     setInvoice(await res.json()); setEditing(false); setSaving(false)
-  }
-  async function handleApprove() {
-    setSaving(true)
-    setInvoice(await (await fetch(`/api/invoices/${id}/approve`, { method:'POST' })).json()); setSaving(false)
-  }
-  async function handleReject() {
-    if (!confirm('Reject this invoice?')) return
-    setSaving(true)
-    await fetch(`/api/invoices/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ status:'rejected' }) })
-    setInvoice(await (await fetch(`/api/invoices/${id}`)).json())
-    setSaving(false)
+    showToast('Saved')
   }
 
   async function handleDelete() {
@@ -58,17 +98,81 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
     router.push('/invoices')
   }
 
+  // Keyboard shortcuts
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (editing) return
+      if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return
+      if (e.key === 'a' || e.key === 'A') handleApprove()
+      if (e.key === 'r' || e.key === 'R') handleReject()
+      if (e.key === 'ArrowLeft'  && prevId) router.push(`/invoices/${prevId}`)
+      if (e.key === 'ArrowRight' && nextId) router.push(`/invoices/${nextId}`)
+      if (e.key === 'Escape') router.push('/invoices')
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [editing, handleApprove, handleReject, prevId, nextId, router])
+
   if (loading) return <div style={{ padding:60, textAlign:'center', color:'var(--text-muted)' }}>Loading…</div>
   if (!invoice) return <div style={{ color:'var(--danger)' }}>Invoice not found.</div>
 
   const f = (k: keyof Invoice) => String((form[k] ?? invoice[k]) ?? '')
+  const canAction = invoice.status !== 'approved' && invoice.status !== 'rejected'
 
   return (
     <div style={{ maxWidth:880 }} className="fade-in">
-      {/* Back */}
-      <button onClick={() => router.back()} style={{ display:'flex', alignItems:'center', gap:6, color:'var(--text-muted)', background:'none', border:'none', marginBottom:20, fontSize:13, cursor:'pointer' }}>
-        <ArrowLeft size={14} /> Back to Invoices
-      </button>
+
+      {/* Toast */}
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 28, right: 28, zIndex: 999,
+          padding: '11px 20px', borderRadius: 9, fontSize: 13, fontWeight: 600,
+          background: toast.type === 'success' ? '#16A34A' : '#DC2626',
+          color: '#fff', boxShadow: '0 4px 20px rgba(0,0,0,0.18)',
+          transition: 'opacity 0.2s',
+        }}>
+          {toast.msg}
+        </div>
+      )}
+
+      {/* Navigation row */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+        <button onClick={() => router.push('/invoices')} style={{ display:'flex', alignItems:'center', gap:6, color:'var(--text-muted)', background:'none', border:'none', fontSize:13, cursor:'pointer' }}>
+          <ArrowLeft size={14} /> Back to Invoices
+        </button>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* Keyboard shortcut hints */}
+          <div style={{ display: 'flex', gap: 6, marginRight: 8 }}>
+            {[
+              { key: 'A', label: 'Approve', show: canAction },
+              { key: 'R', label: 'Reject',  show: canAction },
+              { key: '←', label: 'Prev', show: !!prevId },
+              { key: '→', label: 'Next', show: !!nextId },
+            ].filter(k => k.show).map(k => (
+              <span key={k.key} style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <kbd style={{ background: 'var(--surface-2)', border: '1px solid var(--border-2)', borderRadius: 4, padding: '1px 5px', fontFamily: 'monospace', fontSize: 11 }}>{k.key}</kbd>
+                {k.label}
+              </span>
+            ))}
+          </div>
+
+          <button
+            onClick={() => prevId && router.push(`/invoices/${prevId}`)}
+            disabled={!prevId}
+            style={{ display:'flex', alignItems:'center', gap:4, padding:'5px 10px', borderRadius:6, border:'1px solid var(--border-2)', background:'var(--surface)', color: prevId ? 'var(--text)' : 'var(--text-muted)', cursor: prevId ? 'pointer' : 'default', fontSize:12, opacity: prevId ? 1 : 0.4 }}
+          >
+            <ChevronLeft size={13} /> Prev
+          </button>
+          <button
+            onClick={() => nextId && router.push(`/invoices/${nextId}`)}
+            disabled={!nextId}
+            style={{ display:'flex', alignItems:'center', gap:4, padding:'5px 10px', borderRadius:6, border:'1px solid var(--border-2)', background:'var(--surface)', color: nextId ? 'var(--text)' : 'var(--text-muted)', cursor: nextId ? 'pointer' : 'default', fontSize:12, opacity: nextId ? 1 : 0.4 }}
+          >
+            Next <ChevronRight size={13} />
+          </button>
+        </div>
+      </div>
 
       {/* Duplicate warning */}
       {invoice.is_duplicate && (
@@ -81,7 +185,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
       {/* ── Paper invoice card ── */}
       <Card style={{ overflow:'hidden' }}>
 
-        {/* Invoice header — clean white with ruled bottom */}
+        {/* Invoice header */}
         <div style={{ padding:'28px 32px 24px', borderBottom:'2px solid var(--border)', display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
           <div>
             <p style={{ fontSize:10, fontWeight:700, letterSpacing:'0.1em', color:'var(--text-muted)', textTransform:'uppercase', marginBottom:6 }}>Invoice</p>
@@ -106,9 +210,8 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
           </div>
         </div>
 
-        {/* Action / confidence bar */}
+        {/* Action bar */}
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 24px', background:'var(--surface-2)', borderBottom:'1px solid var(--border)' }}>
-          {/* Confidence */}
           {invoice.ai_confidence !== null ? (
             <div style={{ display:'flex', alignItems:'center', gap:8 }}>
               <span style={{ fontSize:11, color:'var(--text-muted)' }}>AI confidence</span>
@@ -119,13 +222,15 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             </div>
           ) : <span />}
 
-          {/* Actions */}
           <div style={{ display:'flex', gap:6 }}>
             {!editing ? (
               <>
                 <Button variant="secondary" size="sm" onClick={() => setEditing(true)}><Edit2 size={12}/> Edit</Button>
-                {invoice.status !== 'approved' && invoice.status !== 'rejected' && (
-                  <Button size="sm" onClick={handleApprove} disabled={saving}><Check size={12}/> Approve</Button>
+                {canAction && (
+                  <Button size="sm" onClick={handleApprove} disabled={saving}
+                    style={{ background: '#16A34A', borderColor: '#16A34A' }}>
+                    <Check size={12}/> Approve
+                  </Button>
                 )}
                 {invoice.status !== 'rejected' && (
                   <Button variant="danger" size="sm" onClick={handleReject} disabled={saving}><X size={12}/> Reject</Button>
@@ -154,7 +259,6 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
               <FieldRow label="Due Date"       value={f('due_date')}         editing={editing} onChange={v => setForm(p=>({...p, due_date:v}))}         type="date" />
               <FieldRow label="Currency"       value={f('currency')}         editing={editing} onChange={v => setForm(p=>({...p, currency:v}))}         />
 
-              {/* Category */}
               <div style={{ display:'grid', gridTemplateColumns:'100px 1fr', gap:8, alignItems:'center', padding:'10px 0', borderBottom:'1px solid var(--border)' }}>
                 <span style={labelStyle}>Category</span>
                 {editing ? (
@@ -169,7 +273,6 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
                 )}
               </div>
 
-              {/* Notes */}
               <div style={{ padding:'10px 0' }}>
                 <p style={{ ...labelStyle, marginBottom:5 }}>Notes</p>
                 {editing ? (
@@ -185,7 +288,6 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
           <div style={{ padding:'24px 28px' }}>
             <SectionTitle>Amounts</SectionTitle>
 
-            {/* Amount table */}
             <div style={{ border:'1px solid var(--border)', borderRadius:8, overflow:'hidden', marginBottom:16 }}>
               <table style={{ width:'100%', borderCollapse:'collapse' }}>
                 <tbody>
@@ -196,7 +298,6 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
               </table>
             </div>
 
-            {/* Tax status pill */}
             {!editing ? (
               <div style={{ display:'flex', alignItems:'center', gap:7, padding:'8px 12px', background:'var(--surface-2)', border:'1px solid var(--border)', borderRadius:7 }}>
                 <div style={{ width:7, height:7, borderRadius:'50%', background: invoice.tax_included ? '#16A34A' : 'var(--border-2)' }} />
@@ -219,7 +320,6 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
               </div>
             )}
 
-            {/* File info */}
             {invoice.invoice_files && invoice.invoice_files.length > 0 && (
               <div style={{ marginTop:20 }}>
                 <SectionTitle>Attached File</SectionTitle>
@@ -261,19 +361,11 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             </a>
           </div>
           {fileInfo.file_type === 'application/pdf' ? (
-            <iframe
-              src={fileInfo.url}
-              style={{ width: '100%', height: 800, border: 'none', display: 'block' }}
-              title="Invoice PDF"
-            />
+            <iframe src={fileInfo.url} style={{ width: '100%', height: 800, border: 'none', display: 'block' }} title="Invoice PDF" />
           ) : (
             <div style={{ padding: 24, display: 'flex', justifyContent: 'center', background: 'var(--surface-2)' }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={fileInfo.url}
-                alt="Invoice"
-                style={{ maxWidth: '100%', borderRadius: 8, boxShadow: '0 2px 16px rgba(0,0,0,0.10)', border: '1px solid var(--border)' }}
-              />
+              <img src={fileInfo.url} alt="Invoice" style={{ maxWidth: '100%', borderRadius: 8, boxShadow: '0 2px 16px rgba(0,0,0,0.10)', border: '1px solid var(--border)' }} />
             </div>
           )}
         </Card>

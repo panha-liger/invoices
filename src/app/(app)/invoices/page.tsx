@@ -10,7 +10,7 @@ import AccountBadge from '@/components/ui/AccountBadge'
 import Button from '@/components/ui/Button'
 import {
   Plus, AlertTriangle, ChevronLeft, ChevronRight,
-  Search, FileText, SlidersHorizontal, Check, X, Trash2,
+  Search, SlidersHorizontal, Check, X, Trash2,
 } from 'lucide-react'
 
 const STATUSES = [
@@ -41,6 +41,8 @@ export default function InvoicesPage() {
   const [total, setTotal]       = useState(0)
   const [page, setPage]         = useState(1)
   const [loading, setLoading]   = useState(true)
+  const [hoveredId, setHoveredId] = useState<string | null>(null)
+  const [actioningId, setActioningId] = useState<string | null>(null)
 
   const [accountId, setAccountId]           = useState('')
   const [status, setStatus]                 = useState('')
@@ -81,16 +83,19 @@ export default function InvoicesPage() {
       )
     : invoices
 
+  // Save ID list to sessionStorage so detail page can do prev/next
+  function openDetail(id: string) {
+    sessionStorage.setItem('invoice_list', JSON.stringify(filtered.map(i => i.id)))
+    router.push(`/invoices/${id}`)
+  }
+
   // Selection helpers
   const allSelected = filtered.length > 0 && filtered.every(i => selected.has(i.id))
   const someSelected = selected.size > 0
 
   function toggleAll() {
-    if (allSelected) {
-      setSelected(new Set())
-    } else {
-      setSelected(new Set(filtered.map(i => i.id)))
-    }
+    if (allSelected) setSelected(new Set())
+    else setSelected(new Set(filtered.map(i => i.id)))
   }
 
   function toggleOne(id: string) {
@@ -111,6 +116,22 @@ export default function InvoicesPage() {
     })
     setBulkLoading(false)
     load()
+  }
+
+  // Inline quick action — optimistic update
+  async function quickAction(e: React.MouseEvent, id: string, action: 'approve' | 'reject') {
+    e.stopPropagation()
+    setActioningId(id)
+    // Optimistic update
+    setInvoices(prev => prev.map(inv =>
+      inv.id === id ? { ...inv, status: action === 'approve' ? 'approved' : 'rejected' } : inv
+    ))
+    await fetch('/api/invoices/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [id], action }),
+    })
+    setActioningId(null)
   }
 
   return (
@@ -171,12 +192,9 @@ export default function InvoicesPage() {
       {someSelected && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px',
-          background: '#1C1917', borderRadius: 8, marginBottom: 10,
-          color: '#fff',
+          background: '#1C1917', borderRadius: 8, marginBottom: 10, color: '#fff',
         }}>
-          <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>
-            {selected.size} selected
-          </span>
+          <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{selected.size} selected</span>
           <button onClick={() => setSelected(new Set())} style={{ ...bulkBtn, color: 'rgba(255,255,255,0.6)', border: '1px solid rgba(255,255,255,0.15)' }}>
             <X size={12} /> Deselect
           </button>
@@ -193,7 +211,10 @@ export default function InvoicesPage() {
       )}
 
       {/* Summary */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          Hover a row to quick-approve or reject without opening it
+        </span>
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
           {loading ? 'Loading…' : `${total} invoice${total !== 1 ? 's' : ''} found`}
         </span>
@@ -214,12 +235,7 @@ export default function InvoicesPage() {
               <thead>
                 <tr style={{ background: 'var(--surface-2)', borderBottom: '1px solid var(--border)' }}>
                   <th style={{ ...thStyle, width: 40, paddingRight: 0 }}>
-                    <input
-                      type="checkbox"
-                      checked={allSelected}
-                      onChange={toggleAll}
-                      style={{ cursor: 'pointer' }}
-                    />
+                    <input type="checkbox" checked={allSelected} onChange={toggleAll} style={{ cursor: 'pointer' }} />
                   </th>
                   {['Vendor / #', 'Account', 'Date', 'Amount', 'Category', 'Status', ''].map((h) => (
                     <th key={h} style={thStyle}>{h}</th>
@@ -227,55 +243,77 @@ export default function InvoicesPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((inv, idx) => (
-                  <tr
-                    key={inv.id}
-                    style={{
-                      borderBottom: idx < filtered.length - 1 ? '1px solid var(--border)' : 'none',
-                      background: selected.has(inv.id) ? '#F5F5F0' : 'transparent',
-                      transition: 'background 0.1s',
-                    }}
-                    onMouseEnter={(e) => { if (!selected.has(inv.id)) e.currentTarget.style.background = '#FAFAF8' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = selected.has(inv.id) ? '#F5F5F0' : 'transparent' }}
-                  >
-                    <td style={{ ...tdStyle, width: 40, paddingRight: 0 }} onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={selected.has(inv.id)}
-                        onChange={() => toggleOne(inv.id)}
-                        style={{ cursor: 'pointer' }}
-                      />
-                    </td>
-                    <td style={{ ...tdStyle, maxWidth: 220, cursor: 'pointer' }} onClick={() => router.push(`/invoices/${inv.id}`)}>
-                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                        {inv.is_duplicate && <AlertTriangle size={13} color="#D97706" style={{ marginTop: 2, flexShrink: 0 }} />}
-                        <div>
-                          <div style={{ fontWeight: 600, color: 'var(--text)', fontSize: 13 }}>{inv.vendor_name_raw || '—'}</div>
-                          {inv.invoice_number && <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>#{inv.invoice_number}</div>}
+                {filtered.map((inv, idx) => {
+                  const isHovered = hoveredId === inv.id
+                  const isActioning = actioningId === inv.id
+                  const isPending = inv.status === 'pending' || inv.status === 'reviewed'
+
+                  return (
+                    <tr
+                      key={inv.id}
+                      style={{
+                        borderBottom: idx < filtered.length - 1 ? '1px solid var(--border)' : 'none',
+                        background: selected.has(inv.id) ? '#F5F5F0' : isHovered ? '#FAFAF8' : 'transparent',
+                        transition: 'background 0.1s',
+                        cursor: 'pointer',
+                      }}
+                      onMouseEnter={() => setHoveredId(inv.id)}
+                      onMouseLeave={() => setHoveredId(null)}
+                      onClick={() => openDetail(inv.id)}
+                    >
+                      <td style={{ ...tdStyle, width: 40, paddingRight: 0 }} onClick={(e) => e.stopPropagation()}>
+                        <input type="checkbox" checked={selected.has(inv.id)} onChange={() => toggleOne(inv.id)} style={{ cursor: 'pointer' }} />
+                      </td>
+                      <td style={{ ...tdStyle, maxWidth: 220 }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                          {inv.is_duplicate && <AlertTriangle size={13} color="#D97706" style={{ marginTop: 2, flexShrink: 0 }} />}
+                          <div>
+                            <div style={{ fontWeight: 600, color: 'var(--text)', fontSize: 13 }}>{inv.vendor_name_raw || '—'}</div>
+                            {inv.invoice_number && <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>#{inv.invoice_number}</div>}
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td style={{ ...tdStyle, cursor: 'pointer' }} onClick={() => router.push(`/invoices/${inv.id}`)}>
-                      {inv.account ? <AccountBadge name={inv.account.name} /> : '—'}
-                    </td>
-                    <td style={{ ...tdStyle, color: 'var(--text-muted)', fontSize: 12, whiteSpace: 'nowrap', cursor: 'pointer' }} onClick={() => router.push(`/invoices/${inv.id}`)}>
-                      {new Date(inv.invoice_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                    </td>
-                    <td style={{ ...tdStyle, cursor: 'pointer' }} onClick={() => router.push(`/invoices/${inv.id}`)}>
-                      <div style={{ fontWeight: 700, fontSize: 13 }}>{fmt(inv.total_amount, inv.currency)}</div>
-                      {inv.tax_amount > 0 && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Tax: {fmt(inv.tax_amount, inv.currency)}</div>}
-                    </td>
-                    <td style={{ ...tdStyle, cursor: 'pointer' }} onClick={() => router.push(`/invoices/${inv.id}`)}>
-                      <CategoryBadge category={inv.category as InvoiceCategory} />
-                    </td>
-                    <td style={{ ...tdStyle, cursor: 'pointer' }} onClick={() => router.push(`/invoices/${inv.id}`)}>
-                      <StatusBadge status={inv.status as InvoiceStatus} />
-                    </td>
-                    <td style={{ ...tdStyle, width: 32, paddingLeft: 0, cursor: 'pointer' }} onClick={() => router.push(`/invoices/${inv.id}`)}>
-                      <ChevronRight size={14} color="var(--text-muted)" />
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td style={tdStyle}>{inv.account ? <AccountBadge name={inv.account.name} /> : '—'}</td>
+                      <td style={{ ...tdStyle, color: 'var(--text-muted)', fontSize: 12, whiteSpace: 'nowrap' }}>
+                        {new Date(inv.invoice_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                      </td>
+                      <td style={tdStyle}>
+                        <div style={{ fontWeight: 700, fontSize: 13 }}>{fmt(inv.total_amount, inv.currency)}</div>
+                        {inv.tax_amount > 0 && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Tax: {fmt(inv.tax_amount, inv.currency)}</div>}
+                      </td>
+                      <td style={tdStyle}><CategoryBadge category={inv.category as InvoiceCategory} /></td>
+                      <td style={tdStyle}><StatusBadge status={inv.status as InvoiceStatus} /></td>
+
+                      {/* Quick actions column */}
+                      <td style={{ ...tdStyle, width: 120, paddingLeft: 0 }} onClick={(e) => e.stopPropagation()}>
+                        {isHovered && isPending ? (
+                          <div style={{ display: 'flex', gap: 5, justifyContent: 'flex-end' }}>
+                            <button
+                              onClick={(e) => quickAction(e, inv.id, 'approve')}
+                              disabled={isActioning}
+                              title="Approve (or press A on detail page)"
+                              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 9px', borderRadius: 5, border: 'none', background: '#16A34A', color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer', opacity: isActioning ? 0.5 : 1 }}
+                            >
+                              <Check size={11} /> OK
+                            </button>
+                            <button
+                              onClick={(e) => quickAction(e, inv.id, 'reject')}
+                              disabled={isActioning}
+                              title="Reject"
+                              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 9px', borderRadius: 5, border: 'none', background: '#DC2626', color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer', opacity: isActioning ? 0.5 : 1 }}
+                            >
+                              <X size={11} /> No
+                            </button>
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                            <ChevronRight size={14} color="var(--text-muted)" />
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
 
